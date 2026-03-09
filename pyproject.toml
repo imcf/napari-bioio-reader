@@ -21,13 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 requires-python = ">=3.10"
-dependencies = [
-    "numpy",
-    "bioio",
-    "bioio-bioformats",
-    "scyjava",
-    "napari[all]>=0.6.2,<0.7",
-]
+dependencies = ["numpy", "bioio", "bioio-bioformats", "scyjava"]
 
 [project.optional-dependencies]
 testing = [
