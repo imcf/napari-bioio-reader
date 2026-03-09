@@ -139,6 +139,41 @@ def bioio_napari_reader(path: str) -> list[Any]:
     Scene name: Background
     """
 
+    def _get_scale(metadata):
+        """
+        Extract physical pixel sizes from metadata, if available.
+
+        Returns
+        -------
+        list[float] or None
+            A list of available physical pixel sizes in ``[z, y, x]`` order.
+            Only axes with a defined physical size are included, so the list
+            may have length 1–3 (e.g. ``[y, x]`` or ``[x]``). Returns ``None``
+            if no physical pixel sizes can be determined.
+        """
+        scale = []
+        try:
+            images = getattr(metadata, "images", None)
+            if not images:
+                return None
+
+            first_image = images[0]
+            px_data = getattr(first_image, "pixels", None)
+            if px_data is None:
+                return None
+
+            if getattr(px_data, "physical_size_z", None) is not None:
+                scale.append(px_data.physical_size_z)
+            if getattr(px_data, "physical_size_y", None) is not None:
+                scale.append(px_data.physical_size_y)
+            if getattr(px_data, "physical_size_x", None) is not None:
+                scale.append(px_data.physical_size_x)
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+        if not scale:
+            return None
+        return scale
     def _extract_scene_name(img, scene_id: str, scene_idx: int) -> str:
         """
         Extract scene name from metadata, fallback to numbered name.
@@ -240,8 +275,33 @@ def bioio_napari_reader(path: str) -> list[Any]:
     # If only one scene, use the original naming
     if len(available_scenes) == 1:
         data = img.data
-        meta = {"name": base_name, "metadata": img.metadata}
+        # Construct a full-length scale vector for napari:
+        # pad non-spatial axes (e.g., T, C) with 1.0 and apply spatial scales to the last axes.
+        scale = _get_scale(img.metadata)
+        try:
+            # Treat scale as a sequence; napari expects len(scale) == data.ndim
+            scale_len = len(scale)  # type: ignore[arg-type]
+        except TypeError:
+            # If scale is a scalar, leave it as-is
+            full_scale = scale
+        else:
+            if scale_len == data.ndim:
+                full_scale = scale
+            elif scale_len < data.ndim:
+                # Assume spatial dimensions are the last axes
+                pad_len = data.ndim - scale_len
+                full_scale = [1.0] * pad_len + list(scale)
+            else:
+                # More scales than dimensions: truncate to match data.ndim
+                full_scale = list(scale)[-data.ndim :]
+
+        meta = {
+            "name": base_name,
+            "metadata": img.metadata,
+            "scale": full_scale,
+        }
         layers.append((data, meta, "image"))
+        
     else:
         # Multiple scenes: create a layer for each scene
         for scene_idx, scene_id in enumerate(available_scenes):
@@ -261,9 +321,11 @@ def bioio_napari_reader(path: str) -> list[Any]:
                         "scene_index": scene_idx,
                         "scene_name": scene_name,
                         "total_scenes": len(available_scenes),
+                        "scale": _get_scale(img.metadata)
                     },
                 },
             }
+
             layers.append((data, meta, "image"))
 
     return layers
